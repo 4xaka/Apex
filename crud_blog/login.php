@@ -1,17 +1,26 @@
 <?php
 session_start();
+
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $conn = new mysqli("localhost", "root", "", "blog");
-    $username = $_POST["username"];
-    $password = $_POST["password"];
-    $result = $conn->query("SELECT * FROM users WHERE username='$username'");
+    require_once "config.php";
+    $username = trim($_POST["username"]);
+    $password = trim($_POST["password"]);
+
+    $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
     if ($result->num_rows > 0) {
         $user = $result->fetch_assoc();
-        if (password_verify($password, $user["password"])) {
-            $_SESSION["user"] = $username;
-            header("Location: dashboard.php");
-            exit();
-        } else {
+       if (password_verify($password, $user["password"])) {
+    $_SESSION["user"] = $username;
+    $_SESSION["user_id"] = $user["id"];     // 🔐 Store user ID
+    $_SESSION["role"] = $user["role"];
+    header("Location: dashboard.php");
+    exit();
+}
+ else {
             $error = "Invalid password!";
         }
     } else {
@@ -19,6 +28,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     }
 }
 ?>
+
 <!DOCTYPE html>
 <html>
 <head>
@@ -28,9 +38,11 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <body>
 <div class="container mt-5">
     <h2>Login</h2>
+
     <?php if (isset($error)): ?>
-        <div class="alert alert-danger"><?= $error ?></div>
+        <div class="alert alert-danger"><?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
+
     <form method="POST">
         <div class="mb-3">
             <label>Username</label>

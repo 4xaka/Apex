@@ -5,71 +5,93 @@ if (!isset($_SESSION["user"])) {
     exit();
 }
 
-// Connect to the database
-$conn = new mysqli("localhost", "root", "", "blog");
+require_once "config.php";
 
-// Handle search
-$search = isset($_GET['search']) ? $_GET['search'] : '';
-$search_safe = $conn->real_escape_string($search);
+$search = isset($_GET['search']) ? trim($_GET['search']) : '';
+$search_safe = "%{$search}%";
 
-// Pagination setup
 $limit = 5;
-$page = isset($_GET['page']) ? $_GET['page'] : 1;
+$page = isset($_GET['page']) ? (int)$_GET['page'] : 1;
 $offset = ($page - 1) * $limit;
 
-// Get posts with search and pagination
-$sql = "SELECT * FROM posts 
-        WHERE title LIKE '%$search_safe%' OR content LIKE '%$search_safe%' 
-        ORDER BY created_at DESC 
-        LIMIT $limit OFFSET $offset";
-$result = $conn->query($sql);
+$user = $_SESSION["user"];
+$role = $_SESSION["role"];
 
-// Get total count for pagination
-$count_sql = "SELECT COUNT(*) as total FROM posts 
-              WHERE title LIKE '%$search_safe%' OR content LIKE '%$search_safe%'";
-$total_result = $conn->query($count_sql);
-$total_posts = $total_result->fetch_assoc()['total'];
+// Get current user ID
+$user_id = null;
+$user_stmt = $conn->prepare("SELECT id FROM users WHERE username = ?");
+$user_stmt->bind_param("s", $user);
+$user_stmt->execute();
+$user_result = $user_stmt->get_result();
+if ($user_result->num_rows > 0) {
+    $user_id = $user_result->fetch_assoc()['id'];
+}
+
+// Prepare main query
+if ($role === 'admin') {
+    $stmt = $conn->prepare("SELECT * FROM posts WHERE title LIKE ? OR content LIKE ? ORDER BY created_at DESC LIMIT ? OFFSET ?");
+    $count_stmt = $conn->prepare("SELECT COUNT(*) as total FROM posts WHERE title LIKE ? OR content LIKE ?");
+    $stmt->bind_param("ssii", $search_safe, $search_safe, $limit, $offset);
+    $count_stmt->bind_param("ss", $search_safe, $search_safe);
+} else {
+    $stmt = $conn->prepare("SELECT * FROM posts WHERE user_id = ? AND (title LIKE ? OR content LIKE ?) ORDER BY created_at DESC LIMIT ? OFFSET ?");
+    $count_stmt = $conn->prepare("SELECT COUNT(*) as total FROM posts WHERE user_id = ? AND (title LIKE ? OR content LIKE ?)");
+    $stmt->bind_param("issii", $user_id, $search_safe, $search_safe, $limit, $offset);
+    $count_stmt->bind_param("iss", $user_id, $search_safe, $search_safe);
+}
+
+$stmt->execute();
+$result = $stmt->get_result();
+
+$count_stmt->execute();
+$count_result = $count_stmt->get_result();
+$total_posts = $count_result->fetch_assoc()['total'];
 $total_pages = ceil($total_posts / $limit);
 ?>
+<!-- HTML below remains unchanged (same as your current version) -->
+
 <!DOCTYPE html>
 <html>
 <head>
     <title>Dashboard</title>
-    <!-- Bootstrap CSS CDN -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 </head>
 <body>
 <div class="container mt-5">
-    <h2>Welcome, <?php echo htmlspecialchars($_SESSION["user"]); ?></h2>
+    <h2>Welcome, <?= htmlspecialchars($user) ?> (<?= htmlspecialchars($role) ?>)</h2>
     <a href="create_post.php" class="btn btn-success mb-3">Add New Post</a>
     <a href="logout.php" class="btn btn-secondary mb-3">Logout</a>
 
     <!-- Search Form -->
     <form class="d-flex mb-4" method="GET" action="dashboard.php">
-        <input class="form-control me-2" type="text" name="search" placeholder="Search posts..." value="<?php echo htmlspecialchars($search); ?>">
+        <input class="form-control me-2" type="text" name="search" placeholder="Search posts..." value="<?= htmlspecialchars($search) ?>">
         <button class="btn btn-primary" type="submit">Search</button>
     </form>
 
     <!-- Posts Table -->
     <table class="table table-bordered">
         <thead>
-            <tr>
-                <th>Title</th>
-                <th>Content</th>
-                <th>Created At</th>
+        <tr>
+            <th>Title</th>
+            <th>Content</th>
+            <th>Created At</th>
+            <?php if ($role === 'admin' || $role === 'editor'): ?>
                 <th>Actions</th>
-            </tr>
+            <?php endif; ?>
+        </tr>
         </thead>
         <tbody>
         <?php while ($row = $result->fetch_assoc()): ?>
             <tr>
-                <td><?php echo htmlspecialchars($row['title']); ?></td>
-                <td><?php echo htmlspecialchars($row['content']); ?></td>
-                <td><?php echo $row['created_at']; ?></td>
-                <td>
-                    <a href="edit_post.php?id=<?php echo $row['id']; ?>" class="btn btn-warning btn-sm">Edit</a>
-                    <a href="delete_post.php?id=<?php echo $row['id']; ?>" class="btn btn-danger btn-sm">Delete</a>
-                </td>
+                <td><?= htmlspecialchars($row['title']) ?></td>
+                <td><?= htmlspecialchars($row['content']) ?></td>
+                <td><?= $row['created_at'] ?></td>
+                <?php if ($role === 'admin' || $role === 'editor'): ?>
+                    <td>
+                        <a href="edit_post.php?id=<?= $row['id'] ?>" class="btn btn-warning btn-sm">Edit</a>
+                        <a href="delete_post.php?id=<?= $row['id'] ?>" class="btn btn-danger btn-sm" onclick="return confirm('Are you sure?')">Delete</a>
+                    </td>
+                <?php endif; ?>
             </tr>
         <?php endwhile; ?>
         </tbody>
@@ -79,8 +101,8 @@ $total_pages = ceil($total_posts / $limit);
     <nav>
         <ul class="pagination">
             <?php for ($i = 1; $i <= $total_pages; $i++): ?>
-                <li class="page-item <?php if ($i == $page) echo 'active'; ?>">
-                    <a class="page-link" href="dashboard.php?page=<?php echo $i; ?>&search=<?php echo urlencode($search); ?>"><?php echo $i; ?></a>
+                <li class="page-item <?= ($i == $page) ? 'active' : '' ?>">
+                    <a class="page-link" href="dashboard.php?page=<?= $i ?>&search=<?= urlencode($search) ?>"><?= $i ?></a>
                 </li>
             <?php endfor; ?>
         </ul>

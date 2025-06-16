@@ -1,9 +1,15 @@
 <?php
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
-    $conn = new mysqli("localhost", "root", "", "blog");
-    $username = $_POST["username"];
-    $password = password_hash($_POST["password"], PASSWORD_DEFAULT);
-    $conn->query("INSERT INTO users (username, password) VALUES ('$username', '$password')");
+    require_once "config.php";
+
+    $username = trim($_POST["username"]);
+    $password = password_hash(trim($_POST["password"]), PASSWORD_DEFAULT);
+    $role = 'editor'; // default role
+
+    $stmt = $conn->prepare("INSERT INTO users (username, password, role) VALUES (?, ?, ?)");
+    $stmt->bind_param("sss", $username, $password, $role);
+    $stmt->execute();
+
     header("Location: login.php");
     exit();
 }
@@ -17,7 +23,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 <body>
 <div class="container mt-5">
     <h2>Register</h2>
-    <form method="POST">
+    <form method="POST" novalidate>
         <div class="mb-3">
             <label>Username</label>
             <input class="form-control" type="text" name="username" required>
